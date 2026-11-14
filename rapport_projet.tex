@@ -1,0 +1,412 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{amsmath,amssymb,booktabs,array}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{icomma}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+\hypersetup{colorlinks=true,linkcolor=blue!55!black,urlcolor=blue!55!black,citecolor=blue!55!black}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{Projet Data Science -- Commerce international}
+\fancyhead[R]{Projet 01}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}
+\newcommand{\achanger}[1]{\textcolor{blue!60!black}{\textbf{[À compléter : #1]}}}
+\graphicspath{{figures/}}
+\title{\textbf{Rapport de projet -- Data Science et commerce international}}
+\author{Imane Zine El Abdine et Ichrak Driouich}
+\date{\today}
+
+\begin{document}
+
+% ======================================================================
+\begin{titlepage}
+\centering
+{\Large ENCG Settat \par}
+\vspace{1cm}
+{\large Filière : CI \quad Module : Data Science\par}
+\vspace{1.8cm}
+{\Huge\bfseries Prévision des exportations marocaines de légumes (HS~07)\par}
+\vspace{0.6cm}
+{\Large Projet 01 -- Prévision des exportations marocaines par produit\par}
+\vspace{1.5cm}
+{\Large Rapport scientifique de projet\par}
+\vspace{1.5cm}
+\begin{tabular}{rl}
+Étudiante 1 : & Imane Zine El Abdine \\
+Étudiante 2 : & Ichrak Driouich \\
+Responsable : & A. Larhlimi \\
+Année universitaire : & 2026--2027 \\
+Date de remise : & 14/11/2026 \\
+\end{tabular}
+\vfill
+\textit{Données : UN Comtrade (API publique). Aucun résultat n'a été inventé : tous les chiffres proviennent du notebook joint.}
+\end{titlepage}
+
+% ======================================================================
+\section*{Résumé}\addcontentsline{toc}{section}{Résumé}
+Ce projet cherche à savoir si l'on peut prévoir, une année à l'avance, la valeur des exportations marocaines de légumes (chapitre HS~07). Les données proviennent de l'API publique de UN Comtrade (\url{https://comtradeapi.un.org/public/v1/preview/C/A/HS}) : exportations du Maroc vers le monde, en dollars courants, de 2010 à 2024, soit 15 valeurs annuelles. La valeur passe de 0,60 à 2,13 milliards de dollars sur la période, avec une croissance moyenne d'environ 9,5~\% par an. Nous comparons deux règles de référence (persistance, et persistance augmentée de la croissance moyenne passée) à deux modèles d'apprentissage intégrés dans des pipelines scikit-learn (Ridge et Gradient Boosting), en prévoyant soit la valeur, soit le taux de croissance. La validation est chronologique (validation croisée temporelle sur 2017--2021, test final sur 2022--2024). Aucun modèle ne fait mieux que la règle « persistance + croissance moyenne », qui obtient un WAPE de 3,1~\% sur le test ; le meilleur modèle, Ridge appliqué à la croissance, atteint 4,3~\%. Le Gradient Boosting appliqué directement à la valeur échoue (23,9~\%), car il ne peut pas prévoir au-delà des valeurs déjà vues. Ces résultats sont stables dans tous les tests de sensibilité. Nous prévoyons environ 2,34 milliards de dollars en 2025 (fourchette indicative de 2,09 à 2,64 milliards). Les principales limites sont la petite taille de l'échantillon et l'absence de variables externes.
+
+\tableofcontents
+\newpage
+
+% ======================================================================
+\section{Introduction}\label{sec:intro}
+
+\subsection{Contexte économique}
+Les exportations agricoles et agroalimentaires occupent une place importante dans le commerce extérieur du Maroc. Selon l'Office des Changes, les exportations de marchandises du Maroc ont atteint 456,3 milliards de dirhams en 2024, en hausse de 6,1~\%, et le secteur « agriculture et agroalimentaire » fait partie des premiers secteurs exportateurs, avec environ 87 milliards de dirhams, derrière l'automobile et les phosphates~\cite{hespress2025}. Les légumes (chapitre 07 du Système harmonisé, qui regroupe les légumes, plantes, racines et tubercules alimentaires) font partie de ces exportations agricoles.
+
+Pour un exportateur, ou pour un organisme qui accompagne les exportations, connaître à l'avance l'ordre de grandeur des ventes de l'année suivante aide à planifier la production, à anticiper les besoins logistiques (transport, stockage, chaîne du froid) et à choisir où concentrer la prospection commerciale. C'est cette décision que notre projet cherche à éclairer.
+
+\subsection{Problématique et hypothèses}
+Notre question de recherche est la suivante : \textbf{à partir des valeurs observées jusqu'à une année $t$, peut-on prévoir la valeur des exportations marocaines de légumes (chapitre HS~07) pour l'année $t+1$ ?}
+
+L'unité d'analyse est l'année : une observation correspond à la valeur totale exportée par le Maroc vers le monde pour le chapitre HS~07. La période étudiée va de 2010 à 2024 et la variable cible est la valeur exportée en $t+1$, en dollars américains courants. Nous partons de trois hypothèses :
+\begin{itemize}
+\item \textbf{H1} : les exportations d'une année sont proches de celles de l'année précédente, donc une prévision « on reprend la dernière valeur » devrait déjà donner des résultats corrects ;
+\item \textbf{H2} : en ajoutant l'information des années passées et la tendance récente, un modèle comme Ridge ou le Gradient Boosting peut faire un peu mieux ;
+\item \textbf{H3} : avec seulement une quinzaine d'années, un modèle complexe risque de surapprendre, et son avantage sur une méthode simple sera probablement faible.
+\end{itemize}
+
+\subsection{Objectifs}
+Nous nous fixons trois objectifs mesurables :
+\begin{enumerate}
+\item construire une série annuelle propre et documentée des exportations HS~07 du Maroc entre 2010 et 2024, à partir d'une source officielle ;
+\item comparer, sans fuite temporelle, deux modèles de référence et deux modèles d'apprentissage à l'aide de trois métriques (MAE, RMSE et WAPE) ;
+\item produire une prévision pour 2025, accompagnée d'une fourchette d'incertitude et de recommandations sous conditions.
+\end{enumerate}
+
+% ======================================================================
+\section{Présentation du jeu de données}\label{sec:data}
+
+\subsection{Source, période et unité d'analyse}
+Les données proviennent de \textbf{UN Comtrade}, la base de la Division de statistique des Nations Unies qui regroupe les échanges de marchandises déclarés par les douanes de chaque pays~\cite{comtrade}. Nous utilisons l'API publique « preview », qui ne nécessite pas de clé. Chaque requête porte sur une année, avec les paramètres suivants : pays déclarant Maroc (\texttt{reporterCode=504}), partenaire Monde (\texttt{partnerCode=0}), exportations (\texttt{flowCode=X}), chapitre HS~07 (\texttt{cmdCode=07}), données annuelles.
+
+La version preview n'accepte qu'une seule période par requête et renvoie au maximum 500 lignes ; nous envoyons donc une requête par année entre 2010 et 2024. L'API limite aussi les appels rapprochés : plusieurs requêtes ont d'abord reçu une erreur HTTP~429 (« trop de requêtes »), puis ont abouti grâce à de nouvelles tentatives automatiques. Toutes les requêtes ont finalement renvoyé une réponse valide (statut 200). Le jeu de données utilisé a été extrait le 14/11/2026 ; la date, les paramètres et le statut de chaque requête sont enregistrés dans un journal. L'utilisation des données est soumise aux conditions de UN Comtrade~\cite{comtradelicence} : les données d'origine ne sont pas redistribuées, seuls des résultats transformés sont présentés.
+
+Le jeu brut contient \textbf{15 lignes} (une par année, sans année manquante) et \textbf{47 colonnes}. La valeur exportée (\texttt{primaryValue}) est exprimée en dollars américains courants.
+
+\subsection{Dictionnaire des variables}
+Sur les 47 colonnes reçues, nous en conservons 11 (tableau~\ref{tab:variables}). Les 36 autres sont écartées : 14 colonnes sont entièrement vides (libellés et codes ISO non fournis par la version preview) ; les quantités et poids ne sont renseignés que pour 8 ou 9 années sur 15, avec une seule valeur distincte ; la valeur CIF n'est renseignée que pour 3 années ; les autres colonnes sont constantes ou répètent l'année. Nous travaillons donc uniquement en valeur.
+
+\begin{table}[H]\centering\small
+\caption{Dictionnaire des variables conservées (source : UN Comtrade, extraction du 14/11/2026)}\label{tab:variables}
+\begin{tabular}{lllp{6.3cm}}\toprule
+Variable & Type & Unité & Description et rôle\\\midrule
+\texttt{refYear} & entier & année & Année de référence (index temporel)\\
+\texttt{reporterCode} & entier & code M49 & Pays déclarant, 504 = Maroc (contrôle)\\
+\texttt{partnerCode} & entier & code M49 & Partenaire, 0 = Monde (contrôle)\\
+\texttt{flowCode} & texte & -- & Sens du flux, X = exportations (contrôle)\\
+\texttt{cmdCode} & texte & code HS & Produit, 07 = légumes (contrôle)\\
+\texttt{classificationCode} & texte & -- & Version de la nomenclature HS (qualité)\\
+\texttt{primaryValue} & réel & USD courants & Valeur exportée : \textbf{variable cible} (décalée à $t+1$)\\
+\texttt{fobvalue} & réel & USD courants & Valeur FOB (vérification de \texttt{primaryValue})\\
+\texttt{isReported} & booléen & -- & Valeur déclarée directement par le pays (qualité)\\
+\texttt{isAggregate} & booléen & -- & Valeur agrégée par Comtrade (qualité)\\
+\texttt{legacyEstimationFlag} & entier & -- & Indicateur d'estimation, 0 ou 4 (qualité)\\
+\bottomrule\end{tabular}
+\end{table}
+
+\subsection{Qualité et préparation}
+Nous avons contrôlé les points suivants : aucune valeur manquante, aucun doublon sur l'année, les 15 lignes correspondent bien à la requête (Maroc, Monde, exportations, HS~07), aucune valeur nulle ou négative, et aucune année manquante entre 2010 et 2024. Les colonnes \texttt{primaryValue} et \texttt{fobvalue} sont strictement identiques.
+
+Les transformations sont donc peu nombreuses : sélection des 11 colonnes, tri chronologique, suppression de \texttt{fobvalue} (redondante), retrait des colonnes de contrôle une fois la requête vérifiée, et renommage (\texttt{refYear} devient \texttt{annee}, \texttt{primaryValue} devient \texttt{valeur\_usd}). Le jeu propre contient 15 lignes et 6 colonnes. Aucune valeur n'a été imputée ni modifiée. Chaque étape est enregistrée dans un journal des transformations.
+
+Trois points de vigilance demeurent :
+\begin{itemize}
+\item \textbf{Mode de construction des données.} Pour 2010--2014 et 2016, la valeur du chapitre 07 est déclarée directement par le Maroc ; pour 2015 et de 2017 à 2024, elle est reconstituée par Comtrade à partir de données plus détaillées. La série mélange donc deux méthodes de construction.
+\item \textbf{Changements de nomenclature.} La version du Système harmonisé passe de H2 à H4 en 2015, à H5 en 2017 et à H6 en 2022. Les croissances de 2015 (+7,2~\%) et de 2022 (+12,7~\%) restent dans la tendance. En revanche, 2017 affiche la plus forte hausse de la série (+25,2~\%) et cumule un changement de nomenclature et le passage à des données reconstituées. Comme des hausses comparables existent sans aucun changement (+23,3~\% en 2011, +21,6~\% en 2013), nous gardons la valeur telle quelle et testons la sensibilité des résultats à cette année (section~\ref{sec:sensibilite}).
+\item \textbf{Valeurs nominales.} Les montants sont en dollars courants : ils intègrent l'effet des prix et du taux de change, et pas seulement celui des volumes.
+\end{itemize}
+
+% ======================================================================
+\section{Analyse exploratoire}\label{sec:eda}
+
+\begin{figure}[H]\centering
+\includegraphics[width=.76\linewidth]{figure1_evolution_exportations.png}
+\caption{Exportations marocaines de légumes (HS~07) vers le monde, 2010--2024. Points pleins : valeurs déclarées par le Maroc ; points vides : valeurs reconstituées par Comtrade ; lignes pointillées : changements de version de la nomenclature HS.}\label{fig:evolution}
+\end{figure}
+
+La figure~\ref{fig:evolution} montre que la valeur exportée passe d'environ 0,60 milliard de dollars en 2010 à 2,13 milliards en 2024, soit une multiplication par 3,5 en quinze ans. La hausse est presque continue : seules trois années reculent (2012, 2016 et 2020), et chaque baisse est rattrapée dès l'année suivante. La progression s'accélère à partir de 2017 et devient très régulière depuis 2021. Le saut de 2017 coïncide toutefois avec le passage à des valeurs reconstituées et à la nomenclature H5 : une partie de ce saut pourrait venir de la construction des données, ce que la version preview ne permet pas de vérifier.
+
+\begin{figure}[H]\centering
+\includegraphics[width=.72\linewidth]{figure2_croissance_annuelle.png}
+\caption{Taux de croissance annuel des exportations de légumes (en \%).}\label{fig:croissance}
+\end{figure}
+
+Sur la figure~\ref{fig:croissance}, la croissance annuelle moyenne est de 9,9~\%, mais avec un écart-type de 10,2 points : la variabilité d'une année à l'autre est aussi grande que la croissance moyenne elle-même. Onze années sur quatorze sont en hausse. Les baisses restent limitées (au plus $-9,3$~\% en 2012) et sont suivies de fortes reprises (+21,6~\% en 2013, +25,2~\% en 2017, +11,0~\% en 2021). Depuis 2021, la croissance est très stable, entre 11 et 13~\% par an. Pour la prévision, une erreur d'environ 10~\% sur une année isolée sera donc difficile à éviter, car les variations annuelles des exportations agricoles peuvent dépendre de facteurs (récoltes, prix, demande extérieure) absents de notre série.
+
+\begin{figure}[H]\centering
+\includegraphics[width=.66\linewidth]{figure3_comparaison_periodes.png}
+\caption{Comparaison du début (2011--2016) et de la fin (2019--2024) de la période : variation annuelle moyenne en millions de dollars (à gauche) et croissance annuelle moyenne en \% (à droite).}\label{fig:periodes}
+\end{figure}
+
+La figure~\ref{fig:periodes} montre que la croissance moyenne est proche sur les deux périodes (environ 7,7~\% puis 9,0~\%), alors que la variation annuelle moyenne en dollars est presque trois fois plus grande à la fin (environ 50 puis 141 millions de dollars par an). Par exemple, la hausse de 2011 (+23,3~\%) ne représente que 140 millions de dollars, alors que celle de 2024, plus modeste en pourcentage (+13,3~\%), en représente 251 millions. C'est surtout la taille du marché qui a changé, pas son rythme. Deux conséquences pour la modélisation : les erreurs en dollars seront mécaniquement plus grandes sur les années récentes, et il est plus naturel de modéliser le taux de croissance, qui reste stable, que le niveau.
+
+\begin{figure}[H]\centering
+\includegraphics[width=.44\linewidth]{figure4_persistance.png}
+\caption{Valeur exportée en $t$ en fonction de la valeur en $t-1$ (milliards de dollars). La diagonale correspond à une valeur inchangée.}\label{fig:persistance}
+\end{figure}
+
+La corrélation entre la valeur d'une année et celle de l'année précédente est de 0,98 (figure~\ref{fig:persistance}) : la série est très persistante, ce qui va dans le sens de H1. La plupart des points sont au-dessus de la diagonale, car la valeur augmente presque chaque année ; seules 2012, 2016 et 2020 sont en dessous. Une prévision par persistance sera donc proche de la réalité, mais sous-estimera systématiquement les années de croissance. Une référence qui ajoute la croissance moyenne passée devrait faire mieux.
+
+\begin{figure}[H]\centering
+\includegraphics[width=.72\linewidth]{figure5_echelle_log_tendance.png}
+\caption{Exportations de légumes en échelle logarithmique et tendance exponentielle ajustée sur 2010--2024.}\label{fig:log}
+\end{figure}
+
+En échelle logarithmique (figure~\ref{fig:log}), la série suit approximativement une droite, signe d'une croissance à taux à peu près constant. Le taux de croissance annuel moyen entre 2010 et 2024 est de 9,5~\%, et la tendance ajustée donne environ 8,9~\% par an. Ces chiffres sont inférieurs à la moyenne simple des taux annuels (9,9~\%), car la moyenne arithmétique surestime la croissance réelle lorsque les variations sont irrégulières. Le secteur suit donc une dynamique de croissance régulière, ce qui justifie de tester des modèles qui prévoient le taux de croissance. Cette tendance est ajustée sur toute la période, y compris les années de test : elle sert uniquement à décrire la série et n'est jamais utilisée dans les modèles.
+
+% ======================================================================
+\section{Méthodologie}\label{sec:method}
+
+\subsection{Construction des variables}
+Nous nous plaçons à la fin de chaque année $t$ et cherchons à prévoir $t+1$ ; seules les informations disponibles à la fin de $t$ peuvent servir de variables explicatives. Notons $y_t$ la valeur exportée l'année $t$ et $g_t = y_t / y_{t-1} - 1$ son taux de croissance. Pour chaque année $t$, nous construisons six variables : $y_t$, $y_{t-1}$, $g_t$, $g_{t-1}$, la croissance moyenne passée $\bar{g}_t$ et une variable de tendance égale à $t-2010$, avec
+\begin{equation}\label{eq:gmoy}
+\bar{g}_t = \frac{1}{t-2010}\sum_{s=2011}^{t} g_s ,
+\end{equation}
+où $s$ parcourt les années de 2011 à $t$, et $t-2010$ est le nombre de taux de croissance observés jusqu'à $t$.
+
+Deux cibles sont étudiées : la valeur $y_{t+1}$ (cible principale) et le taux de croissance $g_{t+1}$ (cible alternative). Une croissance prévue $\widehat{g}_{t+1}$ est reconvertie en valeur par $\widehat{y}_{t+1} = y_t\,(1+\widehat{g}_{t+1})$. Les indicateurs de qualité (\texttt{isReported}, etc.) ne sont pas utilisés comme variables : ils décrivent la construction des données et non l'activité économique.
+
+Le calcul des retards fait perdre 2010 et 2011, et 2024 n'a pas encore de cible : il reste \textbf{12 observations} ($t$ = 2012 à 2023). La ligne de 2024 est conservée à part pour la prévision 2025. Pour vérifier l'absence de fuite temporelle, nous avons multiplié par 10 la valeur de 2024 et reconstruit les variables : celles de 2010 à 2023 restent strictement identiques, aucune ne dépend donc d'une information future.
+
+\subsection{Découpage et validation}
+Les données forment une série temporelle : un découpage aléatoire ferait apprendre le modèle sur des années postérieures à celles qu'il doit prévoir. Nous utilisons donc un découpage chronologique (tableau~\ref{tab:decoupage} et figure~\ref{fig:decoupage}). Le test n'est utilisé qu'une seule fois, après tous les choix de modélisation.
+
+\begin{table}[H]\centering\small
+\caption{Découpage chronologique des 12 observations}\label{tab:decoupage}
+\begin{tabular}{lccc}\toprule
+Jeu & Années $t$ & Années prévues ($t+1$) & Observations\\\midrule
+Entraînement & 2012--2018 & 2013--2019 & 7\\
+Validation & 2019--2020 & 2020--2021 & 2\\
+Test & 2021--2023 & 2022--2024 & 3\\
+\bottomrule\end{tabular}
+\end{table}
+
+\begin{figure}[H]\centering
+\includegraphics[width=.7\linewidth]{decoupage_chronologique.png}
+\caption{Valeur à prévoir selon le jeu de données. La ligne pointillée indique le maximum observé en entraînement.}\label{fig:decoupage}
+\end{figure}
+
+Deux années de validation ne suffisent pas pour comparer des modèles. Nous utilisons donc aussi une \textbf{validation croisée temporelle} à fenêtre croissante (\texttt{TimeSeriesSplit}, 5 plis, une année par pli) sur entraînement + validation : à chaque pli, le modèle est entraîné sur les années disponibles jusqu'à $t$ et prévoit l'année suivante. Les cinq plis prévoient 2017, 2018, 2019, 2020 et 2021. Toute transformation (standardisation) est intégrée dans un pipeline et ajustée uniquement sur la partie entraînement de chaque pli. La figure~\ref{fig:decoupage} montre aussi que les valeurs du test, ainsi que celle de 2021, dépassent le maximum vu en entraînement : les modèles devront extrapoler.
+
+\subsection{Modèles}
+\paragraph{Références.} La \textbf{persistance} (imposée par la fiche du projet) prévoit $\widehat{y}_{t+1} = y_t$. La référence \textbf{persistance + croissance moyenne} prolonge la valeur actuelle au rythme de la croissance moyenne passée :
+\begin{equation}\label{eq:drift}
+\widehat{y}_{t+1} = y_t\,(1+\bar{g}_t),
+\end{equation}
+où $y_t$ est la valeur de l'année $t$ et $\bar{g}_t$ la croissance moyenne observée jusqu'à $t$ (équation~\eqref{eq:gmoy}). Ces deux règles n'apprennent aucun paramètre.
+
+\paragraph{Ridge.} Une régression linéaire pénalisée, précédée d'une standardisation. Les coefficients sont obtenus en minimisant
+\begin{equation}\label{eq:ridge}
+\sum_{i=1}^{n}\left(z_i-\beta_0-\mathbf{x}_i^{\top}\boldsymbol{\beta}\right)^2+\alpha\,\lVert\boldsymbol{\beta}\rVert_2^2 ,
+\end{equation}
+où $n$ est le nombre d'observations d'entraînement, $z_i$ la cible de l'observation $i$ (valeur ou croissance en $t+1$), $\mathbf{x}_i$ le vecteur de ses six variables standardisées, $\beta_0$ la constante, $\boldsymbol{\beta}$ le vecteur des coefficients, $\lVert\boldsymbol{\beta}\rVert_2^2$ la somme des carrés des coefficients et $\alpha \geq 0$ la force de la pénalité. La pénalité stabilise les coefficients lorsque les variables sont fortement corrélées, ce qui est notre cas ($y_t$, $y_{t-1}$ et la tendance augmentent ensemble). Ridge peut prolonger une tendance au-delà des valeurs observées.
+
+\paragraph{Gradient Boosting.} Une somme d'arbres de décision construits successivement, chacun corrigeant les erreurs des précédents :
+\begin{equation}\label{eq:gbr}
+F_M(\mathbf{x}) = F_0 + \nu\sum_{m=1}^{M} h_m(\mathbf{x}),
+\end{equation}
+où $F_0$ est la moyenne de la cible d'entraînement, $h_m$ le $m$-ième arbre (de profondeur limitée), $M$ le nombre d'arbres et $\nu$ le taux d'apprentissage. Ce modèle capte des relations non linéaires, mais un arbre ne peut jamais prévoir une valeur supérieure à celles vues à l'entraînement.
+
+Chaque modèle d'apprentissage est testé avec les deux cibles (valeur et croissance), soit quatre configurations, chacune intégrée dans un \texttt{Pipeline} scikit-learn~\cite{sklearn}.
+
+\subsection{Métriques}
+Conformément à la fiche du projet, nous utilisons trois métriques. L'erreur absolue moyenne (MAE) s'écrit :
+\begin{equation}\label{eq:mae}
+\mathrm{MAE}=\frac{1}{n}\sum_{i=1}^{n}\left|y_i-\widehat{y}_i\right|.
+\end{equation}
+La racine de l'erreur quadratique moyenne (RMSE), qui pénalise davantage les grosses erreurs, et l'erreur absolue pondérée (WAPE), qui exprime l'erreur en proportion de la valeur totale exportée, s'écrivent :
+\begin{equation}\label{eq:rmse-wape}
+\mathrm{RMSE}=\sqrt{\frac{1}{n}\sum_{i=1}^{n}\left(y_i-\widehat{y}_i\right)^2},
+\qquad
+\mathrm{WAPE}=\frac{\sum_{i=1}^{n}\left|y_i-\widehat{y}_i\right|}{\sum_{i=1}^{n}\left|y_i\right|}.
+\end{equation}
+Dans ces équations, $n$ est le nombre d'années évaluées, $y_i$ la valeur réelle exportée l'année $i$, $\widehat{y}_i$ la valeur prévue et $|\cdot|$ la valeur absolue. MAE et RMSE sont exprimées en dollars ; le WAPE est sans unité (présenté en \%). Pour les modèles qui prévoient la croissance, les métriques sont calculées après reconversion en valeur, afin que tous les modèles soient comparés sur la même grandeur.
+
+\subsection{Réglage des hyperparamètres}
+Avec 12 observations, tester de nombreuses combinaisons ferait courir le risque de retenir un réglage performant par hasard. L'espace de recherche est donc restreint (tableau~\ref{tab:grille}), soit 34 essais au total avec les deux cibles. Le critère est le WAPE en validation croisée temporelle ; le test n'intervient pas. Nous avons écrit notre propre boucle plutôt que \texttt{GridSearchCV}, qui aurait mesuré l'erreur sur la croissance et non sur la valeur.
+
+\begin{table}[H]\centering\small
+\caption{Espace de recherche des hyperparamètres}\label{tab:grille}
+\begin{tabular}{lll}\toprule
+Modèle & Hyperparamètre & Valeurs testées\\\midrule
+Ridge & $\alpha$ (pénalité) & 0,01 ; 0,1 ; 1 ; 10 ; 100\\
+Gradient Boosting & $M$ (nombre d'arbres) & 25 ; 50 ; 100\\
+ & profondeur des arbres & 1 ; 2\\
+ & $\nu$ (taux d'apprentissage) & 0,05 ; 0,1\\
+\bottomrule\end{tabular}
+\end{table}
+
+% ======================================================================
+\section{Résultats expérimentaux}\label{sec:results}
+
+\subsection{Modèles de référence}
+Le tableau~\ref{tab:references} montre que le classement des deux références s'inverse selon le jeu d'évaluation. Sur la validation, la persistance est meilleure : en 2020, année de baisse ($-4,1$~\%), elle reste proche de la réalité, alors que la référence avec croissance prévoit une hausse et se trompe d'environ 203 millions de dollars. En 2021, année de reprise, c'est l'inverse (27 millions d'erreur contre 147 millions). Sur les cinq années de la validation croisée, la référence avec croissance est nettement meilleure (WAPE de 6,9~\% contre 10,5~\%). Deux années de validation sont donc trop sensibles à une année atypique : nos choix s'appuient sur la validation croisée.
+
+\begin{table}[H]\centering\small
+\caption{Performances des modèles de référence (MAE et RMSE en millions de dollars)}\label{tab:references}
+\begin{tabular}{llccc}\toprule
+Référence & Jeu évalué & MAE & RMSE & WAPE (\%)\\\midrule
+Persistance & Validation (2020--2021) & 102,0 & 111,3 & 7,2\\
+Persistance & Validation croisée (2017--2021) & 139,3 & 150,2 & 10,5\\
+Persistance + croissance moy. & Validation (2020--2021) & 114,7 & 144,3 & 8,1\\
+Persistance + croissance moy. & Validation croisée (2017--2021) & 92,0 & 117,8 & 6,9\\
+\bottomrule\end{tabular}
+\end{table}
+
+\subsection{Modèles alternatifs et réglage}
+Avec les réglages par défaut (Ridge avec $\alpha=1$ ; Gradient Boosting avec 100 arbres de profondeur 2 et $\nu=0,1$), aucun modèle ne bat la référence avec croissance en validation croisée. Le meilleur est le Gradient Boosting appliqué à la croissance (WAPE de 9,7~\%), suivi de Ridge (croissance, 11,4~\%), Ridge (valeur, 11,6~\%) et du Gradient Boosting (valeur, 12,1~\%). La limite du Gradient Boosting sur la valeur est déjà visible : ses prévisions pour 2020 et 2021 (1,38 et 1,33 milliard) restent sous le maximum d'entraînement (1,40 milliard), si bien qu'il manque la reprise de 2021.
+
+Le réglage améliore nettement les modèles qui prévoient la croissance (tableau~\ref{tab:reglage}). Les meilleurs réglages sont systématiquement les plus contraints : pour Ridge (croissance), l'erreur diminue quand la pénalité augmente (figure~\ref{fig:ridge}) ; avec une pénalité forte, les coefficients tendent vers zéro et le modèle prévoit pratiquement la croissance moyenne, c'est-à-dire presque la même chose que la référence. Pour Ridge (valeur), l'erreur suit une courbe en U : une pénalité trop faible conduit au surapprentissage (19,4~\% avec $\alpha=0,01$), une pénalité trop forte empêche de suivre la croissance (22,3~\% avec $\alpha=100$).
+
+\begin{table}[H]\centering\small
+\caption{Meilleurs réglages en validation croisée (2017--2021), WAPE en \%}\label{tab:reglage}
+\begin{tabular}{llcc}\toprule
+Modèle & Réglage retenu & WAPE défaut & WAPE réglé\\\midrule
+Ridge (croissance) & $\alpha=100$ & 11,4 & 7,5\\
+Gradient Boosting (croissance) & 25 arbres, prof. 1, $\nu=0,05$ & 9,7 & 7,8\\
+Gradient Boosting (valeur) & 50 arbres, prof. 1, $\nu=0,1$ & 12,1 & 11,4\\
+Ridge (valeur) & $\alpha=1$ & 11,6 & 11,6\\
+\emph{Persistance + croissance moy.} & -- & -- & \emph{6,9}\\
+\bottomrule\end{tabular}
+\end{table}
+
+\begin{figure}[H]\centering
+\includegraphics[width=.58\linewidth]{reglage_ridge_alpha.png}
+\caption{WAPE de Ridge en validation croisée selon la pénalité $\alpha$ (échelle logarithmique).}\label{fig:ridge}
+\end{figure}
+
+Les choix ont été figés avant le test : les deux références et les quatre modèles réglés y sont évalués, et les modèles retenus pour la conclusion sont Ridge (croissance, $\alpha=100$) et le Gradient Boosting (croissance, 25 arbres, profondeur 1, $\nu=0,05$).
+
+\subsection{Évaluation finale sur le test}
+Chaque modèle est réentraîné sur entraînement + validation ($t$ = 2012 à 2020), puis évalué une seule fois sur 2022, 2023 et 2024 (tableau~\ref{tab:performances}, figures~\ref{fig:test} et~\ref{fig:residus}).
+
+\begin{table}[H]\centering\small
+\caption{Comparaison des performances (VC : validation croisée 2017--2021 ; MAE et RMSE en millions de dollars)}\label{tab:performances}
+\begin{tabular}{lcccc}\toprule
+Méthode & WAPE VC (\%) & MAE test & RMSE test & WAPE test (\%)\\\midrule
+Persistance + croissance moyenne & 6,9 & 58,1 & 58,6 & \textbf{3,1}\\
+Ridge (croissance), $\alpha=100$ & 7,5 & 80,8 & 83,2 & 4,3\\
+Gradient Boosting (croissance) & 7,8 & 144,0 & 146,5 & 7,6\\
+Ridge (valeur), $\alpha=1$ & 11,6 & 189,1 & 203,6 & 10,0\\
+Persistance & 10,5 & 216,1 & 217,7 & 11,4\\
+Gradient Boosting (valeur) & 11,4 & 452,5 & 483,9 & 23,9\\
+\bottomrule\end{tabular}
+\end{table}
+
+\begin{figure}[H]\centering
+\includegraphics[width=.74\linewidth]{evaluation_previsions_test.png}
+\caption{Prévisions sur le test (2022--2024) face aux valeurs réelles.}\label{fig:test}
+\end{figure}
+
+\begin{figure}[H]\centering
+\includegraphics[width=.72\linewidth]{evaluation_residus_test.png}
+\caption{Résidus sur le test (valeur réelle moins valeur prévue, en millions de dollars). Un résidu positif signifie une sous-estimation.}\label{fig:residus}
+\end{figure}
+
+Les trois meilleurs modèles apparaissent dans le même ordre qu'en validation croisée, ce qui indique que notre procédure de sélection était fiable. Aucun modèle ne bat la référence persistance + croissance moyenne (WAPE de 3,1~\%, soit environ 58 millions de dollars d'erreur par an) ; Ridge appliqué à la croissance s'en approche (4,3~\%). Tous les résidus sont positifs : tous les modèles sous-estiment les trois années de test (figure~\ref{fig:residus}). La persistance sous-estime d'une année entière de croissance (187, 209 et 251 millions de dollars). Le Gradient Boosting appliqué à la valeur donne des prévisions quasiment plates (1,41 puis 1,46 milliard), alors que la valeur réelle atteint 2,13 milliards en 2024 : son erreur atteint 677 millions cette année-là (figure~\ref{fig:test}).
+
+\subsection{Interprétation des modèles}
+La figure~\ref{fig:importance} présente les coefficients des modèles Ridge et l'importance des variables du Gradient Boosting. La constante de Ridge (croissance) vaut 9,59~\%, exactement la croissance moyenne des années d'entraînement, et ses coefficients sont très faibles (au plus 0,5 point de croissance par écart-type) : le modèle prévoit essentiellement la croissance moyenne. Le Gradient Boosting (croissance) attribue 80~\% de l'importance à la croissance moyenne passée et n'utilise jamais trois des six variables : il a appris de lui-même à reproduire la logique de la référence. Pour Ridge (valeur), l'effet est réparti entre des variables de niveau très corrélées, et les signes ne doivent pas être interprétés isolément.
+
+\begin{figure}[H]\centering
+\includegraphics[width=.95\linewidth]{importance_variables.png}
+\caption{Coefficients de Ridge (variables standardisées) et importance des variables du Gradient Boosting, modèles entraînés sur 2012--2020.}\label{fig:importance}
+\end{figure}
+
+\subsection{Incertitude et sensibilité}\label{sec:sensibilite}
+Pour mesurer l'incertitude, nous avons calculé l'erreur relative de la référence persistance + croissance moyenne pour chacune des 12 années prévues (figure~\ref{fig:incertitude}). L'erreur absolue moyenne est de 6,6~\%. Les erreurs vont d'une surestimation de 13,1~\% (2020) à une sous-estimation de 16,3~\% (2017), et 80~\% d'entre elles sont comprises entre $-10,7$~\% et +12,6~\%. Jusqu'en 2020, les erreurs sont fortes et de signe variable ; depuis 2021, elles sont faibles (+2 à +3~\%) mais toujours positives.
+
+\begin{figure}[H]\centering
+\includegraphics[width=.7\linewidth]{incertitude_erreurs_reference.png}
+\caption{Erreur relative de la référence persistance + croissance moyenne, 2013--2024 (positif = sous-estimation).}\label{fig:incertitude}
+\end{figure}
+
+Enfin, nous avons refait une prévision glissante année par année de 2017 à 2024, avec réentraînement annuel, dans quatre scénarios (tableau~\ref{tab:sensibilite}). Le classement des six modèles est identique dans les quatre scénarios. Retirer 2017 ou 2020 réduit les erreurs de tous les modèles sans changer les conclusions, et entraîner les modèles sur les cinq dernières années seulement n'apporte aucun gain. Ce contrôle inclut les années de test, mais aucune décision n'en a été tirée.
+
+\begin{table}[H]\centering\small
+\caption{WAPE (\%) en prévision glissante selon le scénario}\label{tab:sensibilite}
+\begin{tabular}{lcccc}\toprule
+Modèle & Base 2017--2024 & Sans 2017 & Sans 2020 & Fenêtre de 5 ans\\\midrule
+Persistance + croissance moyenne & 5,1 & 4,3 & 3,9 & 5,1\\
+Ridge (croissance) & 5,6 & 4,7 & 4,4 & 5,6\\
+Gradient Boosting (croissance) & 6,3 & 5,3 & 5,4 & 6,9\\
+Ridge (valeur) & 9,6 & 8,5 & 9,5 & 10,2\\
+Persistance & 10,9 & 10,0 & 11,7 & 10,9\\
+Gradient Boosting (valeur) & 12,6 & 11,7 & 13,9 & 13,9\\
+\bottomrule\end{tabular}
+\end{table}
+
+% ======================================================================
+\section{Discussion}\label{sec:discussion}
+
+\paragraph{Ce que montrent les résultats.} H1 est confirmée : la série est très persistante. H2 est rejetée : sur nos données, aucun modèle d'apprentissage ne fait mieux qu'une règle simple. H3 est confirmée : avec 12 observations, les modèles sont d'autant meilleurs qu'ils s'appuient peu sur les variables explicatives, ce qui montre que celles-ci n'apportent pas d'information utile au-delà de la croissance moyenne passée. Le choix de la cible est en revanche décisif : prévoir le taux de croissance plutôt que la valeur divise par trois l'erreur du Gradient Boosting, car un modèle à base d'arbres ne peut pas extrapoler une série en hausse.
+
+\paragraph{Lecture économique.} Les exportations de légumes suivent une croissance régulière d'environ 9 à 10~\% par an, interrompue par quelques années de baisse rattrapées dès l'année suivante. Les erreurs de prévision se concentrent sur ces années de rupture (2016, 2017, 2020), que l'historique seul ne permet pas d'anticiper. Depuis 2021, le secteur a accéléré (environ 12,5 à 13~\% par an) : les méthodes fondées sur la moyenne passée le sous-estiment légèrement mais systématiquement.
+
+\paragraph{Biais et limites.}
+\begin{itemize}
+\item \textbf{Une seule série, sans variable externe.} Les modèles ignorent les facteurs qui expliquent réellement les ruptures : récoltes, conditions climatiques, prix internationaux, demande des pays importateurs, taux de change.
+\item \textbf{Valeurs nominales.} Les dollars courants mélangent volumes, prix et taux de change : une hausse de la valeur exportée ne signifie pas forcément une hausse des quantités.
+\item \textbf{Qualité des données.} La série combine des années déclarées et reconstituées, et quatre versions de la nomenclature HS ; les tests de sensibilité montrent toutefois que cela ne modifie pas nos conclusions.
+\item \textbf{Taille de l'échantillon.} Avec 12 observations et 3 années de test, les scores sont sensibles à chaque année, et les écarts de quelques dixièmes de point ne sont pas significatifs. Les réglages ont été choisis et comparés sur les mêmes années de validation croisée, ce qui rend leur score légèrement optimiste ; le test reste l'évaluation indépendante.
+\end{itemize}
+
+\paragraph{Restrictions causales.} Une bonne précision prédictive n'établit aucune relation de cause à effet. Nos modèles décrivent une régularité statistique de la série ; ils n'expliquent pas pourquoi les exportations augmentent.
+
+% ======================================================================
+\section{Conclusion et perspectives}\label{sec:conclusion}
+
+\paragraph{Réponse à la question de recherche.} Il est possible de prévoir la valeur annuelle des exportations marocaines de légumes avec une erreur moyenne d'environ 3 à 7~\% selon les périodes. La meilleure méthode n'est cependant pas un modèle d'apprentissage, mais une règle simple : prolonger la valeur de l'année au rythme de la croissance moyenne passée. Ce résultat est stable dans tous nos tests de sensibilité.
+
+\paragraph{Prévision pour 2025.} Appliquée à la valeur de 2024 (2,13 milliards de dollars) et à la croissance moyenne observée depuis 2011 (9,9~\%), cette méthode donne \textbf{environ 2,34 milliards de dollars en 2025}, soit une hausse d'environ 10~\% (figure~\ref{fig:prevision}). Ridge (croissance) donne la même valeur et le Gradient Boosting (croissance) une valeur un peu plus basse (2,28 milliards). D'après les erreurs passées, la valeur réelle devrait se situer, dans environ 8 cas sur 10, entre 2,09 et 2,64 milliards de dollars. Cette fourchette reste indicative, car elle repose sur 12 observations.
+
+\begin{figure}[H]\centering
+\includegraphics[width=.74\linewidth]{prevision_2025.png}
+\caption{Prévision 2025, fourchette indicative à 80~\% et scénarios illustratifs.}\label{fig:prevision}
+\end{figure}
+
+\paragraph{Recommandations sous conditions.}
+\begin{itemize}
+\item Pour la \textbf{planification de base}, retenir une hausse d'environ 10~\% comme hypothèse centrale.
+\item Pour les \textbf{engagements financiers fermes}, raisonner plutôt sur la borne basse (environ 2,09 milliards, soit une valeur stable par rapport à 2024).
+\item \textbf{Si la dynamique récente se poursuit}, la valeur pourrait atteindre environ 2,40 milliards (+12,4~\%) : il est prudent de prévoir des capacités logistiques supérieures à la prévision centrale, puisque la méthode a sous-estimé chaque année depuis 2021.
+\item \textbf{Si des signaux de choc apparaissent} (mauvaise récolte, conditions climatiques défavorables, chute de la demande), envisager un scénario de baisse : un recul comparable à 2012 ramènerait la valeur à environ 1,93 milliard ($-9$~\%).
+\item \textbf{Avant de traduire la prévision en volumes}, tenir compte des prix et du taux de change.
+\end{itemize}
+
+\paragraph{Perspectives.} Plusieurs extensions permettraient d'améliorer ce travail : ajouter des variables externes (prix internationaux, demande des principaux importateurs, taux de change, climat) pour anticiper les années de rupture ; utiliser des données mensuelles pour disposer de plus d'observations ; descendre au niveau des produits (HS~4 ou HS~6) et des marchés partenaires ; raisonner en volumes ou en valeurs déflatées ; enfin, comparer la prévision 2025 à la valeur réelle dès sa publication.
+
+% ======================================================================
+\begin{thebibliography}{9}
+\bibitem{comtrade} Nations Unies, \emph{UN Comtrade API -- Documentation}. \url{https://uncomtrade.org/docs/un-comtrade-api/}.
+\bibitem{comtradelicence} Nations Unies, \emph{UN Comtrade -- Usage Agreement}. \url{https://comtrade.un.org/licenseagreement.html}.
+\bibitem{sklearn} F. Pedregosa \emph{et al.} (2011), \emph{Scikit-learn: Machine Learning in Python}, Journal of Machine Learning Research, 12, 2825--2830.
+\bibitem{hespress2025} Hespress (2025), \emph{Commerce extérieur : les échanges du Maroc progressent de 6,3~\% en 2024} (d'après l'Office des Changes). \url{https://fr.hespress.com/434826-434826.html}.
+\end{thebibliography}
+
+% ======================================================================
+\appendix
+\section{Annexe : reproductibilité}
+Le notebook joint s'exécute de bout en bout sans erreur (« Restart » puis « Run All » ; exécution finale le 14/11/2026). Environnement : Python 3.13.3, numpy 2.2.4, pandas 2.2.3, matplotlib 3.10.3, scikit-learn 1.7.2 et requests 2.32.3 (versions enregistrées dans \texttt{requirements.txt}). La seule source d'aléatoire est le Gradient Boosting, dont la graine est fixée (\texttt{random\_state = 42}) ; le découpage est chronologique et la validation croisée ne mélange pas les observations, si bien que les résultats sont identiques d'une exécution à l'autre.
+
+Les données brutes et le journal des requêtes sont conservés dans le dossier \texttt{data/} : par défaut, le notebook relit ces fichiers au lieu d'interroger de nouveau l'API, ce qui garantit des résultats identiques même si UN Comtrade révise ses données. Le même dossier contient le jeu nettoyé, le journal des transformations, le tableau des variables, les 34 essais de réglage, la comparaison des modèles, les tests de sensibilité et la prévision 2025. Toutes les figures sont enregistrées en PNG (300 dpi) dans \texttt{figures/}. Les chemins sont relatifs, si bien que le notebook fonctionne en local comme sur Google Colab.
+
+\section{Annexe : répartition du travail et usage de l'IA}
+\textbf{Ichrak Driouich} a réalisé les sections 1 à 8 du notebook (problématique, extraction des données, dictionnaire, nettoyage, analyse exploratoire, construction des variables, découpage et validation) et rédigé les parties « Données » et « Analyse exploratoire » du rapport.   
+\textbf{Imane Zine El Abdine} a réalisé les sections 9 à 15 (modèles de référence, modèles alternatifs, hyperparamètres, évaluation, sensibilité, conclusion, reproductibilité), rédigé les parties « Méthodologie », « Résultats », « Discussion » et « Conclusion », assemblé le rapport et écrit le README. Le détail figure dans \texttt{journal\_contributions.md}.
+
+Un assistant d'IA a été utilisé pour l'analyse des consignes, l'aide à la structuration du code et la reformulation de certains textes. Toutes les données proviennent de l'API UN Comtrade, aucun résultat n'a été inventé, et l'ensemble du code a été exécuté, vérifié et compris par les deux membres du binôme.
+
+\end{document}
